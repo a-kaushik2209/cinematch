@@ -139,9 +139,10 @@ def search_movies(query, model, embeddings, metadata):
                 'votes': meta.get('Votes', 0),
                 'type': 'Title Match',
                 'vector': embeddings[idx],
-                'match_score': score
+                'match_score': score,
+                'score': 100 + score
             })
-
+    
     title_matches.sort(key=lambda x: (x['match_score'], x['votes'], x['year']), reverse=True)
     
     target_movie_vector = None
@@ -152,7 +153,7 @@ def search_movies(query, model, embeddings, metadata):
         if item['meta']['Title'] not in seen_titles:
             results.append(item)
             seen_titles.add(item['meta']['Title'])
-
+    
     if target_movie_vector is not None:
         query_vec = target_movie_vector.reshape(1, -1)
         search_type_label = "Similar Plot"
@@ -174,7 +175,7 @@ def search_movies(query, model, embeddings, metadata):
         similarity = sim_scores[idx]
         votes = meta.get('Votes', 0)
 
-        vote_boost = np.log10(votes + 1) * 0.15
+        vote_boost = np.log10(votes + 1) * 0.30
 
         if similarity < 0.2:
             vote_boost = 0
@@ -192,7 +193,6 @@ def search_movies(query, model, embeddings, metadata):
         seen_titles.add(title)
 
     plot_candidates.sort(key=lambda x: x['score'], reverse=True)
-    
     results.extend(plot_candidates)
     
     return results
@@ -222,6 +222,12 @@ if query:
             
         meta = item['meta']
         match_type = item['type']
+        
+        votes = item.get('votes', 0)
+        similarity = item.get('raw_sim', 0)
+        final_score = item.get('score', 0)
+
+        debug_info = f" {int(votes)} | Sim: {similarity:.2f} | Score: {final_score:.2f}"
 
         badge_class = "badge-title" if match_type == "Title Match" else "badge-plot"
         
@@ -238,6 +244,7 @@ if query:
                     position: relative;
                 ">
                     <span class="match-badge {badge_class}">{match_type}</span>
+                    <span style="float: right; color: #888; font-size: 0.75em; font-family: monospace;">{debug_info}</span>
                     <h3 style="margin: 10px 0 0 0; color: #EEE;">{meta['Title']}</h3>
                     <p style="color: #00ADB5; font-size: 0.9em; margin-top: 5px;">{meta['Year']} • {meta['Genre']}</p>
                 </div>
