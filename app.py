@@ -1,17 +1,17 @@
 import streamlit as st
 import pickle
-import time
+import numpy as np
+import pandas as pd
+import re
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# --- 1. CONFIGURATION ---
 st.set_page_config(
     page_title="CineMatch AI",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CUSTOM CSS (The "Sleek" Look) ---
 st.markdown("""
 <style>
     /* Global Font */
@@ -63,21 +63,30 @@ st.markdown("""
     /* Hide Streamlit Branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    
+    /* Match Type Badge */
+    .match-badge {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border-radius: 4px;
+        margin-bottom: 8px;
+        display: inline-block;
+        font-weight: bold;
+    }
+    .badge-title { background-color: #FFD700; color: black; } /* Gold */
+    .badge-plot { background-color: #00ADB5; color: white; }   /* Teal */
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. SESSION STATE ---
 if 'limit' not in st.session_state:
-    st.session_state.limit = 6  # Start with 6 items (2 rows of 3, or 3 rows of 2)
+    st.session_state.limit = 6
 if 'last_query' not in st.session_state:
     st.session_state.last_query = ""
 
-# --- 4. DATA LOADER ---
 @st.cache_resource
 def load_resources():
     model = SentenceTransformer('all-MiniLM-L6-v2')
-    
-    # Stitch files
+
     data_parts = []
     part_num = 0
     while True:
@@ -103,52 +112,124 @@ except Exception as e:
     st.error(f"Critical Error: {e}")
     st.stop()
 
-# --- 5. UI LAYOUT ---
+def normalize_text(text):
+    text = re.sub(r'[^\w\s]', '', text)
+    return text.lower().strip()
 
-# Hero Section
+def search_movies(query, model, embeddings, metadata):
+    results = []
+    seen_titles = set()
+    
+    norm_query = normalize_text(query)
+    query_words = norm_query.split()
+
+    title_matches = []
+    
+    for idx, meta in enumerate(metadata):
+        norm_title = normalize_text(meta['Title'])
+        score = 0
+
+        if norm_query == norm_title: score = 3
+        elif norm_title.startswith(norm_query): score = 2
+        else:
+            all_words = True
+            for w in query_words:
+                if not re.search(r'\b' + re.escape(w) + r'\b', norm_title):
+                    all_words = False
+                    break
+            if all_words: score = 1
+
+        if score > 0:
+            title_matches.append({
+                'meta': meta,
+                'year': meta['Year'],
+                'votes': meta.get('Votes', 0),
+                'type': 'Title Match',
+                'vector': embeddings[idx],
+                'match_score': score
+            })
+    
+    title_matches.sort(key=lambda x: (x['match_score'], x['votes'], x['year']), reverse=True)
+    
+    target_movie_vector = None
+    if title_matches:
+        target_movie_vector = title_matches[0]['vector']
+    
+    for item in title_matches:
+        if item['meta']['Title'] not in seen_titles:
+            results.append(item)
+            seen_titles.add(item['meta']['Title'])
+    
+    if target_movie_vector is not None:
+        query_vec = target_movie_vector.reshape(1, -1)
+        search_type_label = "Similar Plot"
+    else:
+        query_vec = model.encode([query])
+        search_type_label = "Plot Match"
+
+    sim_scores = cosine_similarity(query_vec, embeddings)[0]
+
+    top_indices = sim_scores.argsort()[-100:][::-1]
+    
+    plot_candidates = []
+    for idx in top_indices:
+        meta = metadata[idx]
+        title = meta['Title']
+        
+        if title in seen_titles: continue
+        
+        similarity = sim_scores[idx]
+        votes = meta.get('Votes', 0)
+
+        vote_boost = np.log10(votes + 1) * 0.02
+        final_score = similarity + vote_boost
+        
+        plot_candidates.append({
+            'meta': meta,
+            'year': meta['Year'],
+            'votes': votes,
+            'type': search_type_label,
+            'score': final_score,
+            'raw_sim': similarity
+        })
+        seen_titles.add(title)
+
+    plot_candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    results.extend(plot_candidates)
+    
+    return results
+
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.markdown("<h1 style='text-align: center; color: #00ADB5;'>CineMatch AI</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #888; margin-top: -15px;'>Semantic Plot Search Engine</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #888; margin-top: -15px;'>Universal Search: Titles & Plots</p>", unsafe_allow_html=True)
 
-# Search Bar
-query = st.text_input("", placeholder="Describe the plot... (e.g. 'A detective hunting a serial killer in the rain')", label_visibility="collapsed")
+query = st.text_input("", placeholder="Type a movie name (e.g., 'Tron') or a plot (e.g., 'Future robots')...", label_visibility="collapsed")
 
-# Reset logic
 if query != st.session_state.last_query:
     st.session_state.limit = 6
     st.session_state.last_query = query
 
 if query:
-    # Processing
-    query_vec = model.encode([query])
-    sim_scores = cosine_similarity(query_vec, embeddings)[0]
-    top_indices = sim_scores.argsort()[-50:][::-1]
+    search_results = search_movies(query, model, embeddings, metadata)
     
     st.markdown("---")
-    st.markdown(f"<h5 style='color: #666; margin-bottom: 20px;'>Top Matches</h5>", unsafe_allow_html=True)
     
-    # GRID LAYOUT (2 Columns)
     grid_cols = st.columns(2)
-    
-    seen_movies = set()
     count_displayed = 0
     
-    for idx in top_indices:
+    for item in search_results:
         if count_displayed >= st.session_state.limit:
             break
             
-        meta = metadata[idx]
-        title = meta['Title']
+        meta = item['meta']
+        match_type = item['type']
         
-        if title in seen_movies: continue
-        seen_movies.add(title)
+        badge_class = "badge-title" if match_type == "Title Match" else "badge-plot"
         
-        # Determine which column to place card in (Left or Right)
         col_idx = count_displayed % 2
-        
         with grid_cols[col_idx]:
-            # Create a Card-like container
             with st.container():
                 st.markdown(f"""
                 <div style="
@@ -157,20 +238,20 @@ if query:
                     border-radius: 12px;
                     margin-bottom: 20px;
                     border: 1px solid #333;
+                    position: relative;
                 ">
-                    <h3 style="margin: 0; color: #EEE;">{title}</h3>
+                    <span class="match-badge {badge_class}">{match_type}</span>
+                    <h3 style="margin: 10px 0 0 0; color: #EEE;">{meta['Title']}</h3>
                     <p style="color: #00ADB5; font-size: 0.9em; margin-top: 5px;">{meta['Year']} • {meta['Genre']}</p>
                 </div>
                 """, unsafe_allow_html=True)
-                
-                # Streamlit Expander (Native widget works best for interaction)
-                with st.expander("View Plot Match"):
+
+                with st.expander(f"View Plot ({meta['Year']})"):
                     st.write(f"...{meta['Text']}...")
         
         count_displayed += 1
         
-    # Load More Button (Centered)
-    if count_displayed >= st.session_state.limit and st.session_state.limit < 40:
+    if count_displayed >= st.session_state.limit and count_displayed < len(search_results):
         st.markdown("<br>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
@@ -179,4 +260,4 @@ if query:
                 st.rerun()
 
     if count_displayed == 0:
-        st.warning("No matches found. Try a different description.")
+        st.warning(f"No results found for '{query}'.")
