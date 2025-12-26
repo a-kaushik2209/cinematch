@@ -14,18 +14,15 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* Global Font */
     html, body, [class*="css"] {
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     }
-    
-    /* Remove default top padding */
+
     .block-container {
         padding-top: 2rem;
         padding-bottom: 5rem;
     }
 
-    /* Style the Text Input */
     .stTextInput > div > div > input {
         padding: 12px 20px;
         border-radius: 25px;
@@ -38,7 +35,6 @@ st.markdown("""
         box-shadow: 0 0 5px rgba(0, 173, 181, 0.5);
     }
 
-    /* Style the Buttons */
     .stButton > button {
         border-radius: 20px;
         background-color: #00ADB5;
@@ -54,17 +50,14 @@ st.markdown("""
         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
     }
 
-    /* Card Styling */
     div[data-testid="stVerticalBlock"] > div[style*="background-color"] {
         border-radius: 15px;
         padding: 20px;
     }
-    
-    /* Hide Streamlit Branding */
+
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* Match Type Badge */
+
     .match-badge {
         font-size: 0.75rem;
         padding: 2px 8px;
@@ -73,8 +66,8 @@ st.markdown("""
         display: inline-block;
         font-weight: bold;
     }
-    .badge-title { background-color: #FFD700; color: black; } /* Gold */
-    .badge-plot { background-color: #00ADB5; color: white; }   /* Teal */
+    .badge-title { background-color: #FFD700; color: black; }
+    .badge-plot { background-color: #00ADB5; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -148,7 +141,7 @@ def search_movies(query, model, embeddings, metadata):
                 'vector': embeddings[idx],
                 'match_score': score
             })
-    
+
     title_matches.sort(key=lambda x: (x['match_score'], x['votes'], x['year']), reverse=True)
     
     target_movie_vector = None
@@ -159,7 +152,7 @@ def search_movies(query, model, embeddings, metadata):
         if item['meta']['Title'] not in seen_titles:
             results.append(item)
             seen_titles.add(item['meta']['Title'])
-    
+
     if target_movie_vector is not None:
         query_vec = target_movie_vector.reshape(1, -1)
         search_type_label = "Similar Plot"
@@ -181,7 +174,11 @@ def search_movies(query, model, embeddings, metadata):
         similarity = sim_scores[idx]
         votes = meta.get('Votes', 0)
 
-        vote_boost = np.log10(votes + 1) * 0.02
+        vote_boost = np.log10(votes + 1) * 0.15
+
+        if similarity < 0.2:
+            vote_boost = 0
+            
         final_score = similarity + vote_boost
         
         plot_candidates.append({
@@ -225,7 +222,7 @@ if query:
             
         meta = item['meta']
         match_type = item['type']
-        
+
         badge_class = "badge-title" if match_type == "Title Match" else "badge-plot"
         
         col_idx = count_displayed % 2
@@ -250,7 +247,7 @@ if query:
                     st.write(f"...{meta['Text']}...")
         
         count_displayed += 1
-        
+    
     if count_displayed >= st.session_state.limit and count_displayed < len(search_results):
         st.markdown("<br>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1, 1, 1])
